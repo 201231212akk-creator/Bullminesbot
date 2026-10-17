@@ -1,0 +1,7 @@
+aiogram
+fastapi
+uvicorn
+websockets
+aiohttp
+aiohttp-socks
+
