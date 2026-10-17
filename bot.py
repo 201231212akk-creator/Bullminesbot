@@ -24,7 +24,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 BOT_TOKEN = "8669805818:AAHz-_JGS0nH34SRdCIROqywv-RoHKLvU6c"
 ADMIN_ID = 2062809093
 WEBAPP_URL = "https://symphonious-kataifi-e17154.netlify.app/"
-API_URL = "https://denatured-gruffly-naming.ngrok-free.dev"
+API_URL = "https://bullminesbot-production.up.railway.app"
 EXCHANGE_RATE_MC_TO_BC = 1.5
 EXCHANGE_RATE_BC_TO_MC = 2.0
 DB_NAME = "bullmines.db"
