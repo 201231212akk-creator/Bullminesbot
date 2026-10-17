@@ -23,17 +23,19 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 BOT_TOKEN = "8669805818:AAHz-_JGS0nH34SRdCIROqywv-RoHKLvU6c"
 ADMIN_ID = 2062809093
-WEBAPP_URL = "https://profound-gingersnap-3e19b9.netlify.app"
+WEBAPP_URL = "https://thriving-chimera-d6f91b.netlify.app/"
 API_URL = "https://bullminesbot-production.up.railway.app"
 DB_NAME = "bullmines.db"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("BullMinesSecure")
 
+# База предметов. Енот TASTY добавлен, но в магазине его нет.
 ITEMS_DATABASE = {
     "ring_rainbow": {"name": "Радужный спектр", "type": "Обводка", "rarity": "Secret", "effect": "+1.25х"},
     "color_rainbow": {"name": "Радужный ник", "type": "Цвет", "rarity": "Secret", "effect": "+1.25х"},
-    "hat_crown": {"name": "Корона", "type": "Шляпа", "rarity": "Secret", "effect": "+1.25х", "icon": "👑"}
+    "hat_crown": {"name": "Корона", "type": "Шляпа", "rarity": "Secret", "effect": "+1.25х", "icon": "👑"},
+    "sponsor_tasty": {"name": "Золотой Енот TASTY", "type": "Шляпа", "rarity": "Secret", "effect": "+1.15х", "icon": "🦝"}
 }
 
 def generate_unique_id():
@@ -112,6 +114,7 @@ def setup_database():
         cursor.execute("INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", (key, val))
 
     for item_id in ITEMS_DATABASE.keys():
+        if item_id == "sponsor_tasty": continue # Енота в магазин не кладем
         cursor.execute("INSERT OR IGNORE INTO shop_stock (item_id, quantity) VALUES (?, 7)", (item_id,))
 
     cursor.execute("SELECT COUNT(*) FROM updates")
@@ -570,6 +573,7 @@ async def admin_restock(user_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     for item_id in ITEMS_DATABASE.keys():
+        if item_id == "sponsor_tasty": continue
         cursor.execute("UPDATE shop_stock SET quantity = 7 WHERE item_id = ?", (item_id,))
     conn.commit()
     conn.close()
@@ -695,6 +699,32 @@ async def reset_attempts(message: types.Message, command: CommandObject):
     conn.close()
     await message.reply(f"🔒 Ошибки входа для {target} стёрты.")
 
+# КОМАНДА ДЛЯ ВЫДАЧИ ЕНОТА СПОНСОРУ
+@dp.message(Command("givesponsor"))
+async def give_sponsor(message: types.Message, command: CommandObject):
+    if message.from_user.id != ADMIN_ID: return
+    target = command.args
+    if not target: return await message.reply("Напиши ID спонсора: /givesponsor 12345678")
+    
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT inventory FROM users WHERE user_id = ?", (int(target),))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return await message.reply("Игрок не найден.")
+    
+    inv = json.loads(row[0])
+    if any(x.get("id") == "sponsor_tasty" for x in inv):
+        conn.close()
+        return await message.reply("У него уже есть этот предмет.")
+    
+    inv.append({"id": "sponsor_tasty", "name": "Золотой Енот TASTY", "category": "Шляпа"})
+    cursor.execute("UPDATE users SET inventory = ? WHERE user_id = ?", (json.dumps(inv, ensure_ascii=False), int(target)))
+    conn.commit()
+    conn.close()
+    await message.reply(f"✅ Эксклюзивный предмет 'Золотой Енот TASTY' выдан игроку {target}!")
+
 @dp.callback_query(F.data == "exchange_menu")
 async def exchange_menu(callback: types.CallbackQuery):
     text = (
@@ -719,6 +749,7 @@ async def run_server_and_bot():
                     conn = sqlite3.connect(DB_NAME)
                     cursor = conn.cursor()
                     for item_id in ITEMS_DATABASE.keys():
+                        if item_id == "sponsor_tasty": continue
                         cursor.execute("UPDATE shop_stock SET quantity = 7 WHERE item_id = ?", (item_id,))
                     conn.commit()
                     conn.close()
