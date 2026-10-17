@@ -23,10 +23,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 BOT_TOKEN = "8669805818:AAHz-_JGS0nH34SRdCIROqywv-RoHKLvU6c"
 ADMIN_ID = 2062809093
-WEBAPP_URL = "https://symphonious-kataifi-e17154.netlify.app/"
+WEBAPP_URL = "https://profound-gingersnap-3e19b9.netlify.app"
 API_URL = "https://bullminesbot-production.up.railway.app"
-EXCHANGE_RATE_MC_TO_BC = 1.5
-EXCHANGE_RATE_BC_TO_MC = 2.0
 DB_NAME = "bullmines.db"
 
 logging.basicConfig(level=logging.INFO)
@@ -86,13 +84,6 @@ def setup_database():
     )
     """)
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS exchanges (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER, amount_mc REAL, amount_bc REAL, direction TEXT,
-        check_url TEXT, status TEXT DEFAULT 'pending', created_at TEXT
-    )
-    """)
-    cursor.execute("""
     CREATE TABLE IF NOT EXISTS feed (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER, username TEXT, avatar TEXT,
@@ -123,7 +114,6 @@ def setup_database():
     for item_id in ITEMS_DATABASE.keys():
         cursor.execute("INSERT OR IGNORE INTO shop_stock (item_id, quantity) VALUES (?, 7)", (item_id,))
 
-    # первое обновление
     cursor.execute("SELECT COUNT(*) FROM updates")
     if cursor.fetchone()[0] == 0:
         cursor.execute(
@@ -132,7 +122,7 @@ def setup_database():
         )
         cursor.execute(
             "INSERT INTO updates (version, title, body, created_at, is_new) VALUES (?, ?, ?, ?, 1)",
-            ("1.0.1", "Фиксы и новинки", "• Добавлена лента\n• Добавлены игры на m'c\n• Обмен валют\n• Ивенты для всех", time.time())
+            ("1.0.1", "Фиксы и новинки", "• Добавлена лента\n• Обновлен дизайн\n• Улучшена стабильность", time.time())
         )
 
     conn.commit()
@@ -183,8 +173,7 @@ class ConnectionManager:
 
 ws_manager = ConnectionManager()
 
-# Онлайн через polling
-poll_online = {}   # user_id -> {page, last_seen, currency}
+poll_online = {}   
 
 def get_online_count(currency_filter=None):
     now = time.time()
@@ -259,10 +248,8 @@ def add_feed(user_id, username, avatar, game, amount):
     except Exception as e:
         logger.error(f"feed error: {e}")
 
-# ===== POLLING =====
 @app.get("/api/sync")
 def api_sync(user_id: int = 0, currency: str = "bc"):
-    # обновляем last_seen при каждом запросе — это гарантирует онлайн
     if user_id:
         if user_id in poll_online:
             poll_online[user_id]["last_seen"] = time.time()
@@ -317,11 +304,6 @@ def api_feed():
     conn.close()
     return {"items": [{"user_id": r[0], "username": r[1], "avatar": r[2], "game": r[3], "amount": int(r[4])} for r in rows]}
 
-@app.get("/api/online_count")
-def api_online_count(currency: str = None):
-    return {"online": get_online_count(currency)}
-
-# ===== UPDATES =====
 @app.get("/api/updates")
 def api_updates():
     conn = sqlite3.connect(DB_NAME)
@@ -354,7 +336,6 @@ def api_updates_add(user_id: int, version: str, title: str, body: str):
     conn.close()
     return {"status": "ok"}
 
-# ===== WEBSOCKET (не используется, оставлен для будущего) =====
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket, user_id: int = 0):
     await ws_manager.connect(websocket, user_id)
@@ -364,7 +345,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int = 0):
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
 
-# --- API: юзер ---
 @app.get("/api/user/{user_id}")
 def user_info(user_id: int):
     conn = sqlite3.connect(DB_NAME)
@@ -410,7 +390,6 @@ def search_user(unique_id: str):
         return {"error": "not_found"}
     return {"user_id": row[0], "username": row[1], "balance": int(row[2]), "avatar": row[3], "premium": bool(row[4]), "premium_banner": row[5]}
 
-# --- API: магазин ---
 @app.get("/api/shop")
 def get_shop():
     conn = sqlite3.connect(DB_NAME)
@@ -454,7 +433,6 @@ async def shop_buy(user_id: int, item_id: str):
     conn.close()
     return {"status": "ok"}
 
-# --- API: абуз ---
 @app.post("/api/admin/toggle_abuse")
 async def toggle_abuse(user_id: int, active: bool):
     if user_id != ADMIN_ID:
@@ -598,7 +576,6 @@ async def admin_restock(user_id: int):
     set_config("next_restock_time", (datetime.now() + timedelta(minutes=5)).isoformat())
     return {"status": "ok"}
 
-# --- API: статистика ---
 @app.post("/api/game/win")
 def game_win(user_id: int, game: str, amount: int, currency: str = "bc"):
     conn = sqlite3.connect(DB_NAME)
@@ -654,50 +631,6 @@ def verify_admin_panel(user_id: int, pin: str):
         conn.close()
         return {"status": "blocked" if is_now_blocked else "denied", "remaining": 3 - attempts}
 
-# ===== КУРС ОБМЕНА =====
-@app.get("/api/exchange/rate")
-def exchange_rate():
-    return {"mc_to_bc": EXCHANGE_RATE_MC_TO_BC, "bc_to_mc": EXCHANGE_RATE_BC_TO_MC}
-
-@app.post("/api/exchange/bc_to_mc")
-def exchange_bc_to_mc(user_id: int, amount_bc: int):
-    """Игрок отдаёт B'c, получает m'c (2 B'c = 1 m'c)"""
-    if amount_bc < 2:
-        return {"status": "error", "message": "Минимум 2 B'c"}
-    amount_mc = amount_bc / EXCHANGE_RATE_BC_TO_MC
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    if not row or row[0] < amount_bc:
-        conn.close()
-        return {"status": "error", "message": "Мало B'c"}
-    cursor.execute("UPDATE users SET balance = balance - ?, balance_mc = balance_mc + ? WHERE user_id = ?",
-                   (amount_bc, amount_mc, user_id))
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "amount_mc": amount_mc}
-
-@app.post("/api/exchange/mc_to_bc")
-def exchange_mc_to_bc(user_id: int, amount_mc: int):
-    """Игрок отдаёт m'c, получает B'c (1 m'c = 1.5 B'c) — только с чеком через юзербота (пока заглушка)"""
-    if amount_mc < 1:
-        return {"status": "error", "message": "Минимум 1 m'c"}
-    amount_bc = int(amount_mc * EXCHANGE_RATE_MC_TO_BC)
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT balance_mc FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    if not row or row[0] < amount_mc:
-        conn.close()
-        return {"status": "error", "message": "Мало m'c"}
-    cursor.execute("UPDATE users SET balance_mc = balance_mc - ?, balance = balance + ? WHERE user_id = ?",
-                   (amount_mc, amount_bc, user_id))
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "amount_bc": amount_bc}
-
-# --- AIOGRAM ---
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -766,14 +699,11 @@ async def reset_attempts(message: types.Message, command: CommandObject):
 async def exchange_menu(callback: types.CallbackQuery):
     text = (
         "💱 <b>ОБМЕН ВАЛЮТЫ</b>\n\n"
-        f"📥 m'c → B'c: <b>1 m'c = {EXCHANGE_RATE_MC_TO_BC} B'c</b>\n"
-        f"📤 B'c → m'c: <b>{EXCHANGE_RATE_BC_TO_MC} B'c = 1 m'c</b>\n\n"
-        "Обмен в веб-аппе: раздел «Игры» → кнопка обмена."
+        "Обмен валюты временно недоступен. Мы работаем над этим!"
     )
     await callback.message.reply(text, parse_mode="HTML")
     await callback.answer()
 
-# --- ЗАПУСК ---
 async def run_server_and_bot():
     config = Config(app=app, host="0.0.0.0", port=8000, log_level="info")
     server = Server(config)
@@ -799,7 +729,6 @@ async def run_server_and_bot():
                 end = float(get_config(f"event_{key}_end") or 0)
                 if end > 0 and end < now_ts:
                     set_config(f"event_{key}_end", "0")
-            # авто-спин арены
             try:
                 conn = sqlite3.connect(DB_NAME)
                 cursor = conn.cursor()
@@ -840,7 +769,6 @@ async def run_server_and_bot():
                 conn.close()
             except Exception as e:
                 logger.error(f"Arena spin error: {e}")
-            # корона
             try:
                 crown_end = float(get_config("event_crown_end") or 0)
                 crown_start = float(get_config("event_crown_start") or 0)
@@ -859,7 +787,6 @@ async def run_server_and_bot():
                     set_config("event_crown_start", "0")
             except Exception as e:
                 logger.error(f"Crown error: {e}")
-            # дуэли: если игрок не активен >30 сек — победа сопернику
             try:
                 conn = sqlite3.connect(DB_NAME)
                 cursor = conn.cursor()
@@ -870,7 +797,6 @@ async def run_server_and_bot():
                     c_active = c_id in poll_online and now_ts - poll_online[c_id].get("last_seen", 0) < 30
                     o_active = o_id in poll_online and now_ts - poll_online[o_id].get("last_seen", 0) < 30
                     if not c_active and o_active:
-                        # создатель ушёл — победа сопернику
                         if cur == "mc":
                             cursor.execute("UPDATE users SET balance_mc = balance_mc + ? WHERE user_id = ?", (int(bet*2), o_id))
                         else:
